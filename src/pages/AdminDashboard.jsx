@@ -27,6 +27,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { exportToJSON } from "../utils/pdfExport";
+import { getAllUsers } from "../api/user";
+import {
+  getCertificationsByUser,
+  updateCertification,
+} from "../api/certification";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444"];
 
@@ -44,21 +49,54 @@ function AdminDashboard() {
   const [userGrowth, setUserGrowth] = useState([]);
   const [topUsers, setTopUsers] = useState([]);
   const [activeTab, setActiveTab] = useState("dashboard");
-  const today = new Date();
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadData = () => {
-    const stored =
-      JSON.parse(localStorage.getItem("users")) || [];
-    setUsers(stored);
-    calculateStats(stored);
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const backendUsers = await getAllUsers();
+      const usersArray = Array.isArray(backendUsers) ? backendUsers : [];
+
+      const usersWithCertifications = await Promise.all(
+        usersArray.map(async (u, index) => {
+          let certifications = [];
+
+          if (u?.id !== undefined && u?.id !== null) {
+            try {
+              certifications = await getCertificationsByUser(u.id);
+              certifications = Array.isArray(certifications) ? certifications : [];
+            } catch {
+              certifications = [];
+            }
+          }
+
+          return {
+            id: u.id,
+            username: u.username || u.name || u.email || `user-${index + 1}`,
+            role: (u.role || "user").toLowerCase(),
+            certifications,
+          };
+        })
+      );
+
+      setUsers(usersWithCertifications);
+      calculateStats(usersWithCertifications);
+    } catch (error) {
+      console.error("Failed to load dashboard data:", error);
+      setUsers([]);
+      calculateStats([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const calculateStats = (users) => {
+    const today = new Date();
     let totalCerts = 0;
     let activeCerts = 0;
     let expiredCerts = 0;
@@ -137,58 +175,31 @@ function AdminDashboard() {
     setUserGrowth(growth);
   };
 
-  const approveRenewal = (username, certId) => {
-    const updated = users.map((u) => {
-      if (u.username === username) {
-        return {
-          ...u,
-          certifications: u.certifications.map((c) =>
-            c.id === certId
-              ? {
-                  ...c,
-                  expiryDate: c.newExpiryDate,
-                  file: c.newFile || c.file,
-                  renewalRequest: false,
-                  verification: "approved",
-                }
-              : c
-          ),
-        };
-      }
-      return u;
-    });
-
-    localStorage.setItem(
-      "users",
-      JSON.stringify(updated)
-    );
-    loadData();
+  const approveRenewal = async (cert) => {
+    try {
+      await updateCertification(cert.id, {
+        renewalRequest: false,
+        verification: "approved",
+        expiryDate: cert.newExpiryDate || cert.expiryDate,
+      });
+      await loadData();
+    } catch (error) {
+      console.error("Failed to approve renewal:", error);
+      alert(error?.response?.data?.message || "Failed to approve renewal request");
+    }
   };
 
-  const rejectRenewal = (username, certId) => {
-    const updated = users.map((u) => {
-      if (u.username === username) {
-        return {
-          ...u,
-          certifications: u.certifications.map((c) =>
-            c.id === certId
-              ? {
-                  ...c,
-                  renewalRequest: false,
-                  verification: "rejected",
-                }
-              : c
-          ),
-        };
-      }
-      return u;
-    });
-
-    localStorage.setItem(
-      "users",
-      JSON.stringify(updated)
-    );
-    loadData();
+  const rejectRenewal = async (cert) => {
+    try {
+      await updateCertification(cert.id, {
+        renewalRequest: false,
+        verification: "rejected",
+      });
+      await loadData();
+    } catch (error) {
+      console.error("Failed to reject renewal:", error);
+      alert(error?.response?.data?.message || "Failed to reject renewal request");
+    }
   };
 
   const exportAllData = () => {
@@ -247,6 +258,11 @@ function AdminDashboard() {
         {/* Dashboard Tab */}
         {activeTab === "dashboard" && (
           <div>
+            {loading && (
+              <div className="bg-white/10 p-4 rounded-xl mb-6 text-gray-300">
+                Loading dashboard data from backend...
+              </div>
+            )}
             {/* Key Stats */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
               <div className="bg-white/10 backdrop-blur-xl p-6 rounded-2xl border border-white/10 hover:border-blue-500 transition">
@@ -555,10 +571,7 @@ function AdminDashboard() {
                         <div className="flex gap-3">
                           <button
                             onClick={() =>
-                              approveRenewal(
-                                user.username,
-                                cert.id
-                              )
+                              approveRenewal(cert)
                             }
                             className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition font-semibold"
                           >
@@ -566,10 +579,7 @@ function AdminDashboard() {
                           </button>
                           <button
                             onClick={() =>
-                              rejectRenewal(
-                                user.username,
-                                cert.id
-                              )
+                              rejectRenewal(cert)
                             }
                             className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition font-semibold"
                           >

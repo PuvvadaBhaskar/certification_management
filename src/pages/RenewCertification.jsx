@@ -1,87 +1,100 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import {
+  getCertificationById,
+  updateCertification,
+} from "../apis/certificationService";
 
 function RenewCertification() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  const [cert, setCert] = useState(null);
   const [newDate, setNewDate] = useState("");
   const [file, setFile] = useState(null);
   const [notes, setNotes] = useState("");
+  const [cert, setCert] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const username = localStorage.getItem("username");
-    const users =
-      JSON.parse(localStorage.getItem("users")) || [];
-
-    const currentUser = users.find(
-      (u) => u.username === username
-    );
-
-    const certificate =
-      currentUser?.certifications.find(
-        (c) => c.id === id
-      );
-
-    if (!certificate) {
-      navigate("/user/certifications");
-      return;
+  const getUserId = () => {
+    try {
+      const user = JSON.parse(localStorage.getItem("user") || "null");
+      if (user?.id !== undefined && user?.id !== null) {
+        return String(user.id);
+      }
+    } catch {
+      // Ignore malformed user JSON.
     }
 
-    setCert(certificate);
-  }, [id, navigate]);
+    const fallbackId = localStorage.getItem("userId");
+    if (fallbackId && fallbackId !== "null" && fallbackId !== "undefined") {
+      return fallbackId;
+    }
 
-  const handleRenew = () => {
+    return null;
+  };
+
+  const userId = getUserId();
+
+  useEffect(() => {
+    const loadCertification = async () => {
+      try {
+        if (!userId) {
+          navigate("/");
+          return;
+        }
+
+        setLoading(true);
+        const response = await getCertificationById(id, userId);
+        const payload = response?.data;
+
+        if (Array.isArray(payload)) {
+          const matched = payload.find((c) => String(c.id) === String(id));
+          setCert(matched || null);
+        } else {
+          setCert(payload || null);
+        }
+      } catch {
+        setCert(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadCertification();
+  }, [id, userId, navigate]);
+
+  useEffect(() => {
+    if (!loading && !cert) {
+      navigate("/user/certifications");
+    }
+  }, [cert, loading, navigate]);
+
+  const handleRenew = async () => {
     if (!newDate) {
       alert("Please select new expiry date");
       return;
     }
 
-    const username = localStorage.getItem("username");
-    const users =
-      JSON.parse(localStorage.getItem("users")) || [];
+    try {
+      await updateCertification(id, {
+        renewalRequest: true,
+        newExpiryDate: newDate,
+        renewalNotes: notes,
+        newFileName: file?.name || null,
+      });
 
-    const updated = users.map((u) => {
-      if (u.username === username) {
-        return {
-          ...u,
-          certifications: u.certifications.map((c) =>
-            c.id === id
-              ? {
-                  ...c,
-                  renewalRequest: true,
-                  newExpiryDate: newDate,
-                  newFile: file
-                    ? {
-                        name: file.name,
-                        data:
-                          URL.createObjectURL(file),
-                      }
-                    : null,
-                  renewalNotes: notes,
-                }
-              : c
-          ),
-        };
-      }
-      return u;
-    });
+      alert(
+        "Renewal request sent to Admin for approval 👑"
+      );
 
-    localStorage.setItem(
-      "users",
-      JSON.stringify(updated)
-    );
-
-    alert(
-      "Renewal request sent to Admin for approval 👑"
-    );
-
-    navigate("/user/certifications");
+      navigate("/user/certifications");
+    } catch (error) {
+      alert(error?.response?.data?.message || "Failed to send renewal request");
+    }
   };
 
-  if (!cert) return null;
+  if (loading || !cert) return null;
 
   const expired =
     new Date(cert.expiryDate) <= new Date();
@@ -101,7 +114,7 @@ function RenewCertification() {
               Certification
             </label>
             <input
-              value={cert.name}
+              value={cert.title || cert.name || ""}
               disabled
               className="w-full p-3 rounded bg-black/30"
             />

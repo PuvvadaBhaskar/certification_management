@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Eye, EyeOff, Mail, Lock } from "lucide-react";
+import { login, saveAuthTokens } from "../api/auth";
 
 function Login() {
   const [username, setUsername] = useState("");
@@ -12,36 +13,17 @@ function Login() {
   const [popup, setPopup] = useState(null);
   const navigate = useNavigate();
 
-  // 🔥 AUTO CREATE ADMIN (System Controlled)
-  useEffect(() => {
-    const users = JSON.parse(localStorage.getItem("users")) || [];
-
-    const adminExists = users.find(
-      (u) => u.role === "admin"
-    );
-
-    if (!adminExists) {
-      users.push({
-        username: "admin",
-        password: "admin123",
-        role: "admin",
-        certifications: [],
-      });
-
-      localStorage.setItem("users", JSON.stringify(users));
-    }
-  }, []);
-
   const validateForm = () => {
     const newErrors = {};
+    const normalizedPassword = password.trim();
     if (!username.trim()) newErrors.username = "Username is required";
     if (username.length < 3) newErrors.username = "Username must be at least 3 characters";
-    if (!password) newErrors.password = "Password is required";
-    if (password.length < 4) newErrors.password = "Password must be at least 4 characters";
+    if (!normalizedPassword) newErrors.password = "Password is required";
+    if (normalizedPassword.length < 4) newErrors.password = "Password must be at least 4 characters";
     return newErrors;
   };
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setErrors({});
 
@@ -52,31 +34,105 @@ function Login() {
     }
 
     setLoading(true);
-    setTimeout(() => {
-      const users = JSON.parse(localStorage.getItem("users")) || [];
-      const user = users.find(
-        (u) => u.username === username && u.password === password
+
+    try {
+      const normalizedUsername = username.trim();
+      const normalizedPassword = password.trim();
+
+      // Convert username to email format if necessary
+      const loginEmail = normalizedUsername.includes("@")
+        ? normalizedUsername.toLowerCase()
+        : `${normalizedUsername.toLowerCase()}@cms.local`;
+
+      console.log("🔐 Logging in with email:", loginEmail);
+
+      // Call backend login API with JSON body
+      const authData = await login(loginEmail, normalizedPassword);
+      console.log("Login response:", authData);
+      console.log("Role:", authData?.role);
+
+      // Save tokens to localStorage
+      saveAuthTokens(authData);
+
+      const normalizeRole = (value) => {
+        const raw = String(value || "").trim().toUpperCase();
+        if (!raw) return "";
+        return raw.startsWith("ROLE_") ? raw.replace("ROLE_", "") : raw;
+      };
+
+      const parseJwtPayload = (token) => {
+        try {
+          if (!token || typeof token !== "string") return null;
+          const parts = token.split(".");
+          if (parts.length < 2) return null;
+          const base64Url = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+          const padded = base64Url + "=".repeat((4 - (base64Url.length % 4)) % 4);
+          return JSON.parse(atob(padded));
+        } catch {
+          return null;
+        }
+      };
+
+      const tokenPayload = parseJwtPayload(authData?.accessToken);
+      const roleCandidates = [
+        authData?.role,
+        authData?.user?.role,
+        Array.isArray(authData?.roles) ? authData.roles[0] : authData?.roles,
+        Array.isArray(tokenPayload?.authorities)
+          ? tokenPayload.authorities[0]
+          : tokenPayload?.authorities,
+        tokenPayload?.role,
+      ];
+
+      const role = roleCandidates.map(normalizeRole).find((r) => r === "ADMIN" || r === "USER") || "";
+      const userId = authData?.userId;
+      const userName = authData?.name || normalizedUsername;
+      const userEmail = authData?.email || loginEmail;
+
+      // Store session info in localStorage
+      localStorage.setItem("username", userName);
+      localStorage.setItem("token", authData?.accessToken || "");
+      localStorage.setItem("role", role);
+      if (userId !== undefined && userId !== null) {
+        localStorage.setItem("userId", String(userId));
+      }
+      localStorage.setItem(
+        "user",
+        JSON.stringify({
+          id: userId,
+          role,
+          name: userName,
+          email: userEmail,
+        })
       );
+      localStorage.setItem("rememberMe", rememberMe ? "true" : "false");
 
-      if (!user) {
-        setLoading(false);
-        setPopup({ type: "error", message: "Invalid username or password!" });
-        return;
-      }
+      console.log("Role candidates:", roleCandidates);
+      console.log("Logged in role:", role);
+      console.log("✅ Login successful! Role:", role, "UserID:", userId);
 
-      localStorage.setItem("username", user.username);
-      localStorage.setItem("role", user.role);
-      if (rememberMe) {
-        localStorage.setItem("rememberMe", "true");
-      }
-
-      setLoading(false);
-      if (user.role === "admin") {
+      // Redirect to appropriate dashboard
+      if (role === "ADMIN") {
         navigate("/admin/dashboard");
-      } else {
+      } else if (role === "USER") {
         navigate("/user/dashboard");
+      } else {
+        throw new Error("Invalid role received from server");
       }
-    }, 800);
+    } catch (error) {
+      console.error("❌ Login error:", error);
+      const errorMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        "Invalid email or password!";
+
+      setPopup({
+        type: "error",
+        message: errorMessage,
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -95,11 +151,6 @@ function Login() {
             Welcome Back 🔐
           </h2>
           <p className="text-gray-400 text-sm">Sign in to access your certifications</p>
-        </div>
-
-        {/* Demo Credentials Hint */}
-        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-6 text-xs">
-          <p className="text-blue-300"><strong>Demo:</strong> admin / admin123</p>
         </div>
 
         {/* Username Field */}

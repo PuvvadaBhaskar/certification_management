@@ -1,48 +1,84 @@
 import { useEffect, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
-import { Download, Upload, History, Trash2 } from "lucide-react";
+import { Download, History, Trash2 } from "lucide-react";
 import { exportToJSON } from "../utils/pdfExport";
 import { getAllActivities } from "../utils/auditLog";
+import { getAllUsers, deleteUser as deleteUserApi } from "../api/user";
+import { getCertificationsByUser } from "../api/certification";
 
 function AdminUserManagement() {
   const [users, setUsers] = useState([]);
   const [activities, setActivities] = useState([]);
   const [activeTab, setActiveTab] = useState("management");
   const [searchTerm, setSearchTerm] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const stored =
-      JSON.parse(localStorage.getItem("users")) || [];
-    // eslint-disable-next-line
-    setUsers(stored);
+    loadUsers();
     setActivities(getAllActivities());
   }, []);
 
-  const deleteUser = (username) => {
+  const loadUsers = async () => {
+    try {
+      setLoading(true);
+      const backendUsers = await getAllUsers();
+      const usersArray = Array.isArray(backendUsers) ? backendUsers : [];
+
+      const usersWithCertifications = await Promise.all(
+        usersArray.map(async (u, index) => {
+          let certifications = [];
+
+          if (u?.id !== undefined && u?.id !== null) {
+            try {
+              certifications = await getCertificationsByUser(u.id);
+              certifications = Array.isArray(certifications) ? certifications : [];
+            } catch {
+              certifications = [];
+            }
+          }
+
+          return {
+            id: u.id,
+            username: u.username || u.name || u.email || `user-${index + 1}`,
+            role: (u.role || "user").toLowerCase(),
+            createdDate: u.createdDate || u.createdAt || null,
+            certifications,
+          };
+        })
+      );
+
+      setUsers(usersWithCertifications);
+    } catch (error) {
+      console.error("Failed to load users:", error);
+      alert(error?.response?.data?.message || "Failed to load users from backend");
+      setUsers([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteUser = async (user) => {
     if (!window.confirm(
-      `Delete user "${username}"? This action cannot be undone.`
+      `Delete user "${user.username}"? This action cannot be undone.`
     ))
       return;
 
-    const updated = users.filter(
-      (u) => u.username !== username
-    );
-    localStorage.setItem("users", JSON.stringify(updated));
-    setUsers(updated);
-  };
-
-  const changeRole = (username) => {
-    const updated = users.map((u) =>
-      u.username === username
-        ? {
-            ...u,
-            role: u.role === "admin" ? "user" : "admin",
-          }
-        : u
-    );
-
-    localStorage.setItem("users", JSON.stringify(updated));
-    setUsers(updated);
+    try {
+      await deleteUserApi(user.id);
+      setUsers((prev) => prev.filter((u) => u.id !== user.id));
+    } catch (error) {
+      console.error("Failed to delete user:", error);
+      console.error("Delete user response:", {
+        status: error?.response?.status,
+        data: error?.response?.data,
+      });
+      const backendMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        "Failed to delete user in backend";
+      alert(`Delete failed: ${backendMessage}`);
+    }
   };
 
   const exportUsers = () => {
@@ -56,45 +92,6 @@ function AdminUserManagement() {
       dataToExport,
       `users-export-${new Date().toISOString().split("T")[0]}.json`
     );
-  };
-
-  const handleImportUsers = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      try {
-        const importedUsers = JSON.parse(reader.result);
-        const merged = [...users];
-
-        importedUsers.forEach((importedUser) => {
-          const existingIndex = merged.findIndex(
-            (u) => u.username === importedUser.username
-          );
-          if (existingIndex >= 0) {
-            merged[existingIndex] = {
-              ...merged[existingIndex],
-              ...importedUser,
-            };
-          } else {
-            merged.push(importedUser);
-          }
-        });
-
-        localStorage.setItem(
-          "users",
-          JSON.stringify(merged)
-        );
-        setUsers(merged);
-        alert(
-          `Successfully imported ${importedUsers.length} users`
-        );
-      } catch {
-        alert("Invalid file format");
-      }
-    };
-    reader.readAsText(file);
   };
 
   const filteredUsers = users.filter((u) =>
@@ -154,20 +151,20 @@ function AdminUserManagement() {
                 <Download size={18} />
                 Export
               </button>
-              <label className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition flex items-center gap-2 cursor-pointer">
-                <Upload size={18} />
-                Import
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={handleImportUsers}
-                  className="hidden"
-                />
-              </label>
+              <button
+                onClick={loadUsers}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition"
+              >
+                Refresh from Backend
+              </button>
             </div>
 
             {/* Users List */}
-            {filteredUsers.length > 0 ? (
+            {loading ? (
+              <div className="bg-white/10 p-8 rounded-2xl text-center text-gray-400">
+                Loading users from backend...
+              </div>
+            ) : filteredUsers.length > 0 ? (
               <div className="space-y-3">
                 {filteredUsers.map((user, i) => (
                   <div
@@ -212,18 +209,7 @@ function AdminUserManagement() {
                       <div className="flex gap-2">
                         <button
                           onClick={() =>
-                            changeRole(user.username)
-                          }
-                          className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg transition font-semibold text-sm"
-                        >
-                          {user.role === "admin"
-                            ? "Make User"
-                            : "Make Admin"}
-                        </button>
-
-                        <button
-                          onClick={() =>
-                            deleteUser(user.username)
+                            deleteUser(user)
                           }
                           className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition flex items-center gap-2"
                         >

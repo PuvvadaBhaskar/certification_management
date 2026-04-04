@@ -24,6 +24,8 @@ import {
 } from "lucide-react";
 import { generatePDF, exportToJSON } from "../utils/pdfExport";
 import { logActivity } from "../utils/auditLog";
+import { getAllUsers } from "../api/user";
+import { getCertificationsByUser } from "../api/certification";
 
 function AdminAnalytics() {
   const [dateRange, setDateRange] = useState("all");
@@ -32,6 +34,7 @@ function AdminAnalytics() {
   const [categoryBreakdown, setCategoryBreakdown] = useState([]);
   const [userEngagement, setUserEngagement] = useState([]);
   const [complianceMetrics, setComplianceMetrics] = useState({});
+  const [loading, setLoading] = useState(false);
 
   const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 
@@ -40,8 +43,31 @@ function AdminAnalytics() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateRange]);
 
-  const generateAnalytics = () => {
-    const users = JSON.parse(localStorage.getItem("users") || "[]");
+  const generateAnalytics = async () => {
+    setLoading(true);
+    try {
+      const users = await getAllUsers();
+      const usersArray = Array.isArray(users) ? users : [];
+      const userCertMap = {};
+
+      await Promise.all(
+        usersArray.map(async (user, index) => {
+          const username = user.username || user.name || user.email || `user-${index + 1}`;
+
+          if (user?.id === undefined || user?.id === null) {
+            userCertMap[username] = [];
+            return;
+          }
+
+          try {
+            const userCerts = await getCertificationsByUser(user.id);
+            userCertMap[username] = Array.isArray(userCerts) ? userCerts : [];
+          } catch {
+            userCertMap[username] = [];
+          }
+        })
+      );
+
     const auditLogs = JSON.parse(localStorage.getItem("auditLogs") || "[]");
 
     // Certification trend data (7 days)
@@ -49,20 +75,29 @@ function AdminAnalytics() {
     setCertificationTrend(trendData);
 
     // Status distribution
-    const distribution = generateStatusDistribution(users);
+    const distribution = generateStatusDistribution(userCertMap);
     setStatusDistribution(distribution);
 
     // Category breakdown
-    const categories = generateCategoryBreakdown(users);
+    const categories = generateCategoryBreakdown(userCertMap);
     setCategoryBreakdown(categories);
 
     // User engagement
-    const engagement = generateUserEngagement(users, auditLogs);
+    const engagement = generateUserEngagement(users, userCertMap, auditLogs);
     setUserEngagement(engagement);
 
     // Compliance metrics
-    const compliance = generateComplianceMetrics(users);
+    const compliance = generateComplianceMetrics(userCertMap);
     setComplianceMetrics(compliance);
+    } catch (error) {
+      console.error("Failed to generate analytics:", error);
+      setStatusDistribution([]);
+      setCategoryBreakdown([]);
+      setUserEngagement([]);
+      setComplianceMetrics({});
+    } finally {
+      setLoading(false);
+    }
   };
 
   const generateCertTrend = () => {
@@ -84,16 +119,12 @@ function AdminAnalytics() {
     return data;
   };
 
-  const generateStatusDistribution = (users) => {
+  const generateStatusDistribution = (userCertMap) => {
     let activeCerts = 0,
       expiredCerts = 0,
       expiringSoon = 0;
 
-    users.forEach((user) => {
-      const certs = JSON.parse(
-        localStorage.getItem(`certifications_${user.username}`) ||
-          "[]"
-      );
+    Object.values(userCertMap).forEach((certs) => {
       const now = new Date();
 
       certs.forEach((cert) => {
@@ -123,14 +154,10 @@ function AdminAnalytics() {
     ];
   };
 
-  const generateCategoryBreakdown = (users) => {
+  const generateCategoryBreakdown = (userCertMap) => {
     const categories = {};
 
-    users.forEach((user) => {
-      const certs = JSON.parse(
-        localStorage.getItem(`certifications_${user.username}`) ||
-          "[]"
-      );
+    Object.values(userCertMap).forEach((certs) => {
       certs.forEach((cert) => {
         const category = cert.category || "Uncategorized";
         categories[category] = (categories[category] || 0) + 1;
@@ -143,18 +170,15 @@ function AdminAnalytics() {
     }));
   };
 
-  const generateUserEngagement = (users, logs) => {
+  const generateUserEngagement = (users, userCertMap, logs) => {
     const topUsers = users.map((user) => {
+      const username = user.username || user.name || user.email || "user";
       const userLogs = logs.filter(
-        (log) => log.username === user.username
+        (log) => log.username === username
       );
-      const userCerts = JSON.parse(
-        localStorage.getItem(
-          `certifications_${user.username}`
-        ) || "[]"
-      );
+      const userCerts = userCertMap[username] || [];
       return {
-        name: user.username,
+        name: username,
         activities: userLogs.length,
         certifications: userCerts.length,
       };
@@ -163,18 +187,14 @@ function AdminAnalytics() {
     return topUsers.sort((a, b) => b.activities - a.activities).slice(0, 8);
   };
 
-  const generateComplianceMetrics = (users) => {
+  const generateComplianceMetrics = (userCertMap) => {
     let totalCerts = 0,
       activeCerts = 0,
       complianceCerts = 0;
 
     const now = new Date();
 
-    users.forEach((user) => {
-      const certs = JSON.parse(
-        localStorage.getItem(`certifications_${user.username}`) ||
-          "[]"
-      );
+    Object.values(userCertMap).forEach((certs) => {
       certs.forEach((cert) => {
         totalCerts++;
         const expiryDate = new Date(cert.expiryDate);
@@ -247,6 +267,12 @@ function AdminAnalytics() {
         <p className="text-gray-400 mb-8">
           Advanced analytics and performance metrics
         </p>
+
+        {loading && (
+          <div className="mb-6 p-3 rounded-lg bg-white/10 text-sm text-gray-300">
+            Loading analytics from backend data...
+          </div>
+        )}
 
         {/* Compliance Metrics Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">

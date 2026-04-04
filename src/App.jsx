@@ -5,6 +5,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import UserDashboard from "./pages/UserDashboard";
 import AddCertification from "./pages/AddCertification";
+import EditCertification from "./pages/EditCertification";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminUserManagement from "./pages/AdminUserManagement";
 import AdminCertificateManagement from "./pages/AdminCertificateManagement";
@@ -31,7 +32,7 @@ function App() {
 <Route
   path="/renew/:id"
   element={
-    <ProtectedRoute allowedRole="user">
+    <ProtectedRoute allowedRole="USER">
       <RenewCertification />
     </ProtectedRoute>
   }
@@ -39,7 +40,7 @@ function App() {
 <Route
   path="/user/certifications"
   element={
-    <ProtectedRoute allowedRole="user">
+    <ProtectedRoute allowedRole="USER">
       <MyCertifications />
     </ProtectedRoute>
   }
@@ -47,7 +48,7 @@ function App() {
 <Route
   path="/user/dashboard"
   element={
-    <ProtectedRoute allowedRole="user">
+    <ProtectedRoute allowedRole="USER">
       <UserDashboard />
     </ProtectedRoute>
   }
@@ -55,7 +56,7 @@ function App() {
 <Route
   path="/profile"
   element={
-    <ProtectedRoute allowedRole="user">
+    <ProtectedRoute allowedRole="USER">
       <Profile />
     </ProtectedRoute>
   }
@@ -63,8 +64,17 @@ function App() {
 <Route
   path="/add-certification"
   element={
-    <ProtectedRoute allowedRole="user">
+    <ProtectedRoute allowedRole="USER">
       <AddCertification />
+    </ProtectedRoute>
+  }
+/>
+
+<Route
+  path="/edit-certification/:id"
+  element={
+    <ProtectedRoute allowedRole="USER">
+      <EditCertification />
     </ProtectedRoute>
   }
 />
@@ -72,7 +82,7 @@ function App() {
 <Route
   path="/notifications"
   element={
-    <ProtectedRoute allowedRole="user">
+    <ProtectedRoute allowedRole="USER">
       <Notifications />
     </ProtectedRoute>
   }
@@ -81,7 +91,7 @@ function App() {
 <Route
   path="/admin/dashboard"
   element={
-    <ProtectedRoute allowedRole="admin">
+    <ProtectedRoute allowedRole="ADMIN">
       <AdminDashboard />
     </ProtectedRoute>
   }
@@ -90,7 +100,7 @@ function App() {
 <Route
   path="/admin/users"
   element={
-    <ProtectedRoute allowedRole="admin">
+    <ProtectedRoute allowedRole="ADMIN">
       <AdminUserManagement />
     </ProtectedRoute>
   }
@@ -99,7 +109,7 @@ function App() {
 <Route
   path="/admin/certifications"
   element={
-    <ProtectedRoute allowedRole="admin">
+    <ProtectedRoute allowedRole="ADMIN">
       <ManageCertifications />
     </ProtectedRoute>
   }
@@ -108,7 +118,7 @@ function App() {
 <Route
   path="/admin/certificate-management"
   element={
-    <ProtectedRoute allowedRole="admin">
+    <ProtectedRoute allowedRole="ADMIN">
       <AdminCertificateManagement />
     </ProtectedRoute>
   }
@@ -117,7 +127,7 @@ function App() {
 <Route
   path="/admin/notifications"
   element={
-    <ProtectedRoute allowedRole="admin">
+    <ProtectedRoute allowedRole="ADMIN">
       <AdminNotifications />
     </ProtectedRoute>
   }
@@ -126,7 +136,7 @@ function App() {
 <Route
   path="/admin/system-config"
   element={
-    <ProtectedRoute allowedRole="admin">
+    <ProtectedRoute allowedRole="ADMIN">
       <AdminSystemConfig />
     </ProtectedRoute>
   }
@@ -135,7 +145,7 @@ function App() {
 <Route
   path="/admin/analytics"
   element={
-    <ProtectedRoute allowedRole="admin">
+    <ProtectedRoute allowedRole="ADMIN">
       <AdminAnalytics />
     </ProtectedRoute>
   }

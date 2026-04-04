@@ -1,126 +1,271 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../layouts/DashboardLayout";
+import { Loader, AlertCircle, CheckCircle } from "lucide-react";
+import { addCertification } from "../api/certification";
 
 function AddCertification() {
-  const [name, setName] = useState("");
-  const [organization, setOrganization] = useState("");
-  const [expiryDate, setExpiryDate] = useState("");
-  const [file, setFile] = useState(null);
+  const [formData, setFormData] = useState({
+    title: "",
+    organization: "",
+    issueDate: "",
+    expiryDate: "",
+    status: "ACTIVE",
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(false);
+  const [certificateFile, setCertificateFile] = useState(null);
   const navigate = useNavigate();
 
-  const handleFile = (e) => {
-    const selected = e.target.files[0];
+  const resolveUserId = () => {
+    const storedUser = localStorage.getItem("user");
 
-    if (!selected) return;
-
-    if (selected.type !== "application/pdf") {
-      alert("Only PDF files allowed!");
-      return;
+    if (storedUser) {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+        const parsedId = parsedUser?.id ?? parsedUser?.userId;
+        if (parsedId !== undefined && parsedId !== null && `${parsedId}`.trim() !== "") {
+          return String(parsedId);
+        }
+      } catch {
+        // Ignore malformed JSON and fallback to legacy key.
+      }
     }
 
-    const reader = new FileReader();
+    const legacyUserId = localStorage.getItem("userId");
+    if (legacyUserId && legacyUserId !== "null" && legacyUserId !== "undefined") {
+      return legacyUserId;
+    }
 
-    reader.onloadend = () => {
-      setFile({
-        name: selected.name,
-        data: reader.result,
-      });
-    };
-
-    reader.readAsDataURL(selected);
+    return null;
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
 
-    if (!name || !organization || !expiryDate || !file) {
-      alert("Fill all fields + upload PDF");
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(false);
+    const resolvedUserId = resolveUserId();
+
+    if (!resolvedUserId) {
+      alert("User not logged in");
+      setError("Session expired. Please log in again.");
       return;
     }
 
-    const username = localStorage.getItem("username");
-    const users = JSON.parse(localStorage.getItem("users")) || [];
+    // Validation
+    if (!formData.title || !formData.organization || !formData.issueDate) {
+      setError("Please fill in all required fields");
+      return;
+    }
 
-    const updatedUsers = users.map((u) => {
-      if (u.username === username) {
-        const newCert = {
-          id: Date.now(),
-          name,
-          organization,
-          expiryDate,
-          file,
-          status: "Pending",
-        };
-
-        const certifications = u.certifications || [];
-        return {
-          ...u,
-          certifications: [...certifications, newCert],
-        };
+    if (formData.issueDate && formData.expiryDate) {
+      if (new Date(formData.issueDate) >= new Date(formData.expiryDate)) {
+        setError("Expiry date must be after issue date");
+        return;
       }
-      return u;
-    });
+    }
 
-    localStorage.setItem("users", JSON.stringify(updatedUsers));
+    if (certificateFile) {
+      if (certificateFile.type !== "application/pdf") {
+        setError("Only PDF files are allowed");
+        return;
+      }
 
-    alert("Certificate Added!");
-    navigate("/user/dashboard");
+      const maxFileSize = 10 * 1024 * 1024;
+      if (certificateFile.size > maxFileSize) {
+        setError("PDF size must be less than 10MB");
+        return;
+      }
+    } else {
+      setError("Please upload a certificate PDF");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const payload = new FormData();
+      payload.append("title", formData.title.trim());
+      payload.append("organization", formData.organization.trim());
+      payload.append("issueDate", formData.issueDate);
+
+      if (formData.expiryDate) {
+        payload.append("expiryDate", formData.expiryDate);
+      }
+
+      payload.append("status", formData.status);
+      payload.append("userId", resolvedUserId);
+      payload.append("file", certificateFile);
+
+      await addCertification(payload);
+
+      setSuccess(true);
+      setFormData({
+        title: "",
+        organization: "",
+        issueDate: "",
+        expiryDate: "",
+        status: "ACTIVE",
+      });
+      setCertificateFile(null);
+
+      setTimeout(() => {
+        navigate("/user/certifications");
+      }, 2000);
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to add certification");
+      console.error("Error adding certification:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <DashboardLayout>
-      <h1 className="text-3xl font-bold mb-8">
-        Add Certification 📜
-      </h1>
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-4xl font-bold mb-8">Add New Certification</h1>
 
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white/10 backdrop-blur-lg p-8 rounded-2xl w-[500px]"
-      >
-        <input
-          type="text"
-          placeholder="Certificate Name"
-          className="w-full p-3 mb-4 rounded bg-black/40"
-          onChange={(e) => setName(e.target.value)}
-        />
+        <div className="bg-white/5 backdrop-blur-lg p-8 rounded-xl border border-white/10">
+          {error && (
+            <div className="mb-6 p-4 bg-red-500/10 border border-red-500 rounded-lg flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+              <p className="text-red-500">{error}</p>
+            </div>
+          )}
 
-        <input
-          type="text"
-          placeholder="Organization"
-          className="w-full p-3 mb-4 rounded bg-black/40"
-          onChange={(e) => setOrganization(e.target.value)}
-        />
+          {success && (
+            <div className="mb-6 p-4 bg-green-500/10 border border-green-500 rounded-lg flex items-center gap-3">
+              <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+              <p className="text-green-500">
+                Certification added successfully! Redirecting...
+              </p>
+            </div>
+          )}
 
-        <input
-          type="date"
-          className="w-full p-3 mb-4 rounded bg-black/40"
-          onChange={(e) => setExpiryDate(e.target.value)}
-        />
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Title */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Certification Title *
+              </label>
+              <input
+                type="text"
+                name="title"
+                value={formData.title}
+                onChange={handleChange}
+                placeholder="e.g., AWS Certified Solutions Architect"
+                className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+              />
+            </div>
 
-        {/* PDF Upload */}
-        <label className="cursor-pointer block mb-4">
-          <span className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl">
-            Upload Certificate (PDF)
-          </span>
-          <input
-            type="file"
-            accept="application/pdf"
-            onChange={handleFile}
-            className="hidden"
-          />
-        </label>
+            {/* Organization */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Organization *
+              </label>
+              <input
+                type="text"
+                name="organization"
+                value={formData.organization}
+                onChange={handleChange}
+                placeholder="e.g., Amazon Web Services"
+                className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+              />
+            </div>
 
-        {file && (
-          <p className="text-green-400 mb-4">
-            Selected: {file.name}
-          </p>
-        )}
+            {/* Issue Date */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Issue Date
+              </label>
+              <input
+                type="date"
+                name="issueDate"
+                value={formData.issueDate}
+                onChange={handleChange}
+                className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-500"
+              />
+            </div>
 
-        <button className="w-full bg-green-600 py-2 rounded">
-          Add Certificate
-        </button>
-      </form>
+            {/* Expiry Date */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Expiry Date *
+              </label>
+              <input
+                type="date"
+                name="expiryDate"
+                value={formData.expiryDate}
+                onChange={handleChange}
+                className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-500"
+              />
+            </div>
+
+            {/* Status */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Status
+              </label>
+              <select
+                name="status"
+                value={formData.status}
+                onChange={handleChange}
+                className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-500"
+              >
+                <option value="ACTIVE">Active</option>
+                <option value="EXPIRED">Expired</option>
+                <option value="EXPIRING_SOON">Expiring Soon</option>
+              </select>
+            </div>
+
+            {/* Certificate PDF */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Certificate PDF (Optional)
+              </label>
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={(e) => {
+                  const selectedFile = e.target.files?.[0] || null;
+                  setCertificateFile(selectedFile);
+                }}
+                className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white file:mr-4 file:rounded file:border-0 file:bg-blue-600 file:px-3 file:py-1 file:text-white focus:outline-none focus:border-blue-500"
+              />
+              <p className="mt-2 text-xs text-gray-400">
+                Upload a PDF up to 10MB (required).
+              </p>
+            </div>
+
+            {/* Submit Button */}
+            <div className="flex gap-4 pt-6">
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white font-medium rounded-lg transition flex items-center justify-center gap-2"
+              >
+                {loading && <Loader className="w-5 h-5 animate-spin" />}
+                {loading ? "Adding..." : "Add Certification"}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/user/certifications")}
+                className="flex-1 px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </DashboardLayout>
   );
 }

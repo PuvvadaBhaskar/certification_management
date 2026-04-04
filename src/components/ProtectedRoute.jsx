@@ -1,16 +1,18 @@
 import { Navigate } from "react-router-dom";
 
 function ProtectedRoute({ children, allowedRole }) {
-  const role = localStorage.getItem("role");
+  const token = localStorage.getItem("token") || localStorage.getItem("accessToken");
+  const storedRole = localStorage.getItem("role") || "";
+  const role = storedRole.toUpperCase().replace("ROLE_", "");
 
   // Not logged in
-  if (!role) {
-    return <Navigate to="/" replace />;
+  if (!token || !role) {
+    return <Navigate to="/login" replace />;
   }
 
   // Wrong role
   if (role !== allowedRole) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={role === "ADMIN" ? "/admin/dashboard" : "/user/dashboard"} replace />;
   }
 
   // Allowed

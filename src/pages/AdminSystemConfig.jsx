@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
 import { Settings, Save, RotateCcw, Database, Bell, Shield, Download, AlertCircle } from "lucide-react";
 import { logActivity } from "../utils/auditLog";
+import { getAllUsers } from "../api/user";
+import { getCertificationsByUser } from "../api/certification";
 
 function AdminSystemConfig() {
   const [config, setConfig] = useState({
@@ -40,16 +42,35 @@ function AdminSystemConfig() {
     }
   };
 
-  const loadSystemStats = () => {
-    const users = JSON.parse(localStorage.getItem("users") || "[]");
+  const loadSystemStats = async () => {
+    let users = [];
     let certCount = 0;
 
-    users.forEach((user) => {
-      const userCerts = JSON.parse(
-        localStorage.getItem(`certifications_${user.username}`) || "[]"
+    try {
+      users = await getAllUsers();
+      users = Array.isArray(users) ? users : [];
+
+      const certArrays = await Promise.all(
+        users.map(async (user) => {
+          if (user?.id === undefined || user?.id === null) {
+            return [];
+          }
+
+          try {
+            const userCerts = await getCertificationsByUser(user.id);
+            return Array.isArray(userCerts) ? userCerts : [];
+          } catch {
+            return [];
+          }
+        })
       );
-      certCount += userCerts.length;
-    });
+
+      certCount = certArrays.flat().length;
+    } catch (error) {
+      console.error("Failed to load backend stats:", error);
+      users = [];
+      certCount = 0;
+    }
 
     const logs = JSON.parse(localStorage.getItem("auditLogs") || "[]");
     const lastBackupTime = localStorage.getItem("lastBackupTime");
@@ -106,49 +127,60 @@ function AdminSystemConfig() {
   };
 
   const performBackup = () => {
-    const backupData = {
-      timestamp: new Date().toISOString(),
-      users: JSON.parse(localStorage.getItem("users") || "[]"),
-      certifications: collectAllCertifications(),
-      notifications: JSON.parse(
-        localStorage.getItem("adminNotifications") || "[]"
-      ),
-      auditLogs: JSON.parse(localStorage.getItem("auditLogs") || "[]"),
-      config: config,
-    };
+    collectAllCertifications().then(({ users, certifications }) => {
+      const backupData = {
+        timestamp: new Date().toISOString(),
+        users,
+        certifications,
+        auditLogs: JSON.parse(localStorage.getItem("auditLogs") || "[]"),
+        config: config,
+      };
 
-    const dataStr = JSON.stringify(backupData, null, 2);
-    const dataBlob = new Blob([dataStr], { type: "application/json" });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `fsad_backup_${new Date().getTime()}.json`;
-    link.click();
+      const dataStr = JSON.stringify(backupData, null, 2);
+      const dataBlob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `fsad_backup_${new Date().getTime()}.json`;
+      link.click();
 
-    localStorage.setItem("lastBackupTime", new Date().toISOString());
-    const adminUsername = localStorage.getItem("username");
-    logActivity(adminUsername, "system_backup", `Performed system backup`);
+      localStorage.setItem("lastBackupTime", new Date().toISOString());
+      const adminUsername = localStorage.getItem("username");
+      logActivity(adminUsername, "system_backup", `Performed system backup`);
 
-    loadSystemStats();
-    setShowBackupConfirm(false);
-    alert("Backup completed successfully!");
+      loadSystemStats();
+      setShowBackupConfirm(false);
+      alert("Backup completed successfully!");
+    });
   };
 
-  const collectAllCertifications = () => {
-    const users = JSON.parse(localStorage.getItem("users") || "[]");
-    const allCerts = [];
+  const collectAllCertifications = async () => {
+    try {
+      const usersResponse = await getUsers();
+      const users = Array.isArray(usersResponse?.data) ? usersResponse.data : [];
 
-    users.forEach((user) => {
-      const userCerts = JSON.parse(
-        localStorage.getItem(`certifications_${user.username}`) || "[]"
+      const allCerts = await Promise.all(
+        users.map(async (user, index) => {
+          const username = user.username || user.name || user.email || `user-${index + 1}`;
+
+          if (user?.id === undefined || user?.id === null) {
+            return { username, certs: [] };
+          }
+
+          try {
+            const certResponse = await getCertifications({ userId: user.id });
+            const certs = Array.isArray(certResponse?.data) ? certResponse.data : [];
+            return { username, certs };
+          } catch {
+            return { username, certs: [] };
+          }
+        })
       );
-      allCerts.push({
-        username: user.username,
-        certs: userCerts,
-      });
-    });
 
-    return allCerts;
+      return { users, certifications: allCerts };
+    } catch {
+      return { users: [], certifications: [] };
+    }
   };
 
   const exportLogs = () => {

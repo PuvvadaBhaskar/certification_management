@@ -1,49 +1,89 @@
 import { useEffect, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import { getAllUsers } from "../api/user";
+import {
+  deleteCertification,
+  getCertificationsByUser,
+  updateCertification,
+} from "../api/certification";
 
 function ManageCertifications() {
-  const [users, setUsers] = useState([]);
+  const [certifications, setCertifications] = useState([]);
   const [showExpired, setShowExpired] =
     useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const stored =
-      JSON.parse(localStorage.getItem("users")) || [];
-    setUsers(stored);
+    loadCertifications();
   }, []);
 
-  const updateStatus = (username, certId, status) => {
-    const updated = users.map((u) => {
-      if (u.username === username) {
-        return {
-          ...u,
-          certifications: u.certifications.map((c) =>
-            c.id === certId ? { ...c, status } : c
-          ),
-        };
-      }
-      return u;
-    });
+  const loadCertifications = async () => {
+    try {
+      setLoading(true);
+      const users = await getAllUsers();
+      const usersArray = Array.isArray(users) ? users : [];
 
-    localStorage.setItem("users", JSON.stringify(updated));
-    setUsers(updated);
+      const certCollections = await Promise.all(
+        usersArray.map(async (user, index) => {
+          if (user?.id === undefined || user?.id === null) {
+            return [];
+          }
+
+          try {
+            const certs = await getCertificationsByUser(user.id);
+            const certsArray = Array.isArray(certs) ? certs : [];
+
+            return certsArray.map((cert) => ({
+              ...cert,
+              username:
+                user.username ||
+                user.name ||
+                user.email ||
+                `user-${index + 1}`,
+              userId: user.id,
+            }));
+          } catch {
+            return [];
+          }
+        })
+      );
+
+      setCertifications(certCollections.flat());
+    } catch (error) {
+      console.error("Failed to load certifications:", error);
+      alert(error?.response?.data?.message || "Failed to load certifications from backend");
+      setCertifications([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const deleteCertificate = (username, certId) => {
-    const updated = users.map((u) => {
-      if (u.username === username) {
-        return {
-          ...u,
-          certifications: u.certifications.filter(
-            (c) => c.id !== certId
-          ),
-        };
-      }
-      return u;
-    });
+  const updateStatus = async (certId, status) => {
+    try {
+      await updateCertification(certId, { status });
+      setCertifications((prev) =>
+        prev.map((c) =>
+          c.id === certId ? { ...c, status } : c
+        )
+      );
+    } catch (error) {
+      console.error("Failed to update certification:", error);
+      alert(error?.response?.data?.message || "Failed to update certification status");
+    }
+  };
 
-    localStorage.setItem("users", JSON.stringify(updated));
-    setUsers(updated);
+  const deleteCertificate = async (certId) => {
+    if (!window.confirm("Delete this certification?")) {
+      return;
+    }
+
+    try {
+      await deleteCertification(certId);
+      setCertifications((prev) => prev.filter((c) => c.id !== certId));
+    } catch (error) {
+      console.error("Failed to delete certification:", error);
+      alert(error?.response?.data?.message || "Failed to delete certification");
+    }
   };
 
   return (
@@ -62,9 +102,13 @@ function ManageCertifications() {
         Show Expired Only
       </label>
 
-      {users.map((user) =>
-        user.certifications
-          ?.filter((cert) =>
+      {loading ? (
+        <div className="bg-white/10 p-5 rounded-xl">
+          Loading certifications from backend...
+        </div>
+      ) : (
+        certifications
+          .filter((cert) =>
             showExpired
               ? new Date(cert.expiryDate) <
                 new Date()
@@ -77,7 +121,7 @@ function ManageCertifications() {
             >
               <p>
                 <strong>{cert.name}</strong> (
-                {user.username})
+                {cert.username})
               </p>
               <p>
                 Org: {cert.organization}
@@ -91,7 +135,6 @@ function ManageCertifications() {
                 <button
                   onClick={() =>
                     updateStatus(
-                      user.username,
                       cert.id,
                       "Approved"
                     )
@@ -104,7 +147,6 @@ function ManageCertifications() {
                 <button
                   onClick={() =>
                     updateStatus(
-                      user.username,
                       cert.id,
                       "Rejected"
                     )
@@ -117,7 +159,6 @@ function ManageCertifications() {
                 <button
                   onClick={() =>
                     deleteCertificate(
-                      user.username,
                       cert.id
                     )
                   }

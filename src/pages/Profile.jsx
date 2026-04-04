@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
 import { Lock, Eye, EyeOff, History } from "lucide-react";
 import { getUserActivities, logActivity } from "../utils/auditLog";
+import { getUserById } from "../apis/userService";
+import { getCertifications } from "../apis/certificationService";
 
 function Profile() {
   const [user, setUser] = useState({});
@@ -12,34 +14,52 @@ function Profile() {
   const [showPassword, setShowPassword] = useState(false);
   const [activities, setActivities] = useState([]);
   const [activeTab, setActiveTab] = useState("settings");
+  const [certificationCount, setCertificationCount] = useState(0);
 
   useEffect(() => {
-    const username = localStorage.getItem("username");
-    const users = JSON.parse(localStorage.getItem("users")) || [];
-    const currentUser = users.find((u) => u.username === username);
+    const loadProfile = async () => {
+      const userId = localStorage.getItem("userId");
+      const username = localStorage.getItem("username");
 
-    if (currentUser) {
-      // eslint-disable-next-line
-      setUser(currentUser);
-      setImage(currentUser.image || null);
-      setNickname(currentUser.nickname || "");
-      if (username) {
-        setActivities(getUserActivities(username));
+      if (!userId) {
+        return;
       }
-    }
+
+      try {
+        const response = await getUserById(userId);
+        const backendUser = response?.data || {};
+        const normalizedUsername =
+          backendUser.username || backendUser.name || backendUser.email || username || "User";
+
+        setUser({
+          ...backendUser,
+          username: normalizedUsername,
+          role: (backendUser.role || "user").toLowerCase(),
+        });
+
+        const savedImage = localStorage.getItem(`profileImage_${userId}`);
+        const savedNickname = localStorage.getItem(`nickname_${userId}`);
+        setImage(savedImage || null);
+        setNickname(savedNickname || "");
+
+        if (normalizedUsername) {
+          setActivities(getUserActivities(normalizedUsername));
+        }
+
+        try {
+          const certRes = await getCertifications({ userId });
+          const certs = Array.isArray(certRes?.data) ? certRes.data : [];
+          setCertificationCount(certs.length);
+        } catch {
+          setCertificationCount(0);
+        }
+      } catch (error) {
+        console.error("Failed to load profile:", error);
+      }
+    };
+
+    loadProfile();
   }, []);
-
-  const updateUser = (updatedFields) => {
-    const users = JSON.parse(localStorage.getItem("users")) || [];
-
-    const updatedUsers = users.map((u) =>
-      u.username === user.username
-        ? { ...u, ...updatedFields }
-        : u
-    );
-
-    localStorage.setItem("users", JSON.stringify(updatedUsers));
-  };
 
   const handleImage = (e) => {
     const file = e.target.files[0];
@@ -50,7 +70,10 @@ function Profile() {
     reader.onloadend = () => {
       const base64 = reader.result;
       setImage(base64);
-      updateUser({ image: base64 });
+      const activeUserId = localStorage.getItem("userId");
+      if (activeUserId) {
+        localStorage.setItem(`profileImage_${activeUserId}`, base64);
+      }
       logActivity(
         user.username,
         "update_profile_photo",
@@ -66,7 +89,10 @@ function Profile() {
       alert("Nickname cannot be empty");
       return;
     }
-    updateUser({ nickname });
+    const activeUserId = localStorage.getItem("userId");
+    if (activeUserId) {
+      localStorage.setItem(`nickname_${activeUserId}`, nickname);
+    }
     logActivity(
       user.username,
       "update_nickname",
@@ -76,19 +102,29 @@ function Profile() {
   };
 
   const handleChangePassword = () => {
-    if (!newPassword || !confirmPassword) {
+    const normalizedNewPassword = newPassword.trim();
+    const normalizedConfirmPassword = confirmPassword.trim();
+
+    if (!normalizedNewPassword || !normalizedConfirmPassword) {
       alert("Please fill in all password fields");
       return;
     }
-    if (newPassword !== confirmPassword) {
+    if (normalizedNewPassword !== normalizedConfirmPassword) {
       alert("Passwords do not match");
       return;
     }
-    if (newPassword.length < 6) {
+    if (normalizedNewPassword.length < 6) {
       alert("Password must be at least 6 characters");
       return;
     }
-    updateUser({ password: newPassword });
+
+    const activeUserId = localStorage.getItem("userId") || user?.id;
+    if (activeUserId) {
+      const credentials = JSON.parse(localStorage.getItem("userCredentials") || "{}");
+      credentials[String(activeUserId)] = normalizedNewPassword;
+      localStorage.setItem("userCredentials", JSON.stringify(credentials));
+    }
+
     logActivity(
       user.username,
       "change_password",
@@ -179,7 +215,7 @@ function Profile() {
                     Total Certifications
                   </p>
                   <p className="text-2xl font-bold text-blue-400 mt-1">
-                    {user?.certifications?.length || 0}
+                    {certificationCount}
                   </p>
                 </div>
               </div>
@@ -264,7 +300,7 @@ function Profile() {
 
                 {newPassword &&
                   confirmPassword &&
-                  newPassword !== confirmPassword && (
+                  newPassword.trim() !== confirmPassword.trim() && (
                     <p className="text-red-400 text-sm mb-4">
                       Passwords do not match
                     </p>

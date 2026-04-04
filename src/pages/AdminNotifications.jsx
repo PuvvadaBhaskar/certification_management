@@ -1,23 +1,107 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
 import { Send, Users, MessageSquare, History, X } from "lucide-react";
 import { logActivity } from "../utils/auditLog";
+import api from "../api/axios";
+import { sendNotification } from "../api/notification";
 
 function AdminNotifications() {
   const [users, setUsers] = useState([]);
-  const [recipients, setRecipients] = useState(new Set());
+  const [usersLoadError, setUsersLoadError] = useState("");
+  const [usersLoadDebug, setUsersLoadDebug] = useState(null);
+  const [selectedUsers, setSelectedUsers] = useState([]);
   const [message, setMessage] = useState("");
   const [title, setTitle] = useState("");
   const [activeTab, setActiveTab] = useState("send");
   const [notifications, setNotifications] = useState([]);
   const [sendAllMode, setSendAllMode] = useState(false);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem("users")) || [];
-    setUsers(stored);
-    // eslint-disable-next-line
+    loadUsers();
     loadNotifications();
   }, []);
+
+  const loadUsers = async () => {
+    try {
+      setUsersLoadError("");
+      const hasToken = Boolean(
+        localStorage.getItem("token") || localStorage.getItem("accessToken")
+      );
+      console.log("[AdminNotifications] Fetch users start", {
+        endpoint: "/users",
+        hasBearerToken: hasToken,
+      });
+
+      let response;
+      let endpointUsed = "/users";
+
+      try {
+        response = await api.get("/users");
+      } catch (firstError) {
+        const firstStatus = firstError?.response?.status;
+        console.log("[AdminNotifications] /users failed, trying /admin/users", {
+          status: firstStatus,
+          body: firstError?.response?.data,
+        });
+        endpointUsed = "/admin/users";
+        response = await api.get("/admin/users");
+      }
+
+      const backendUsers = Array.isArray(response?.data) ? response.data : [];
+
+      setUsersLoadDebug({
+        endpoint: endpointUsed,
+        status: response?.status,
+        bodyType: Array.isArray(response?.data) ? "array" : typeof response?.data,
+        count: backendUsers.length,
+      });
+
+      console.log("[AdminNotifications] Fetch users success", {
+        endpoint: endpointUsed,
+        status: response?.status,
+        count: backendUsers.length,
+        sample: backendUsers[0],
+      });
+
+      const normalizedUsers = backendUsers
+        .map((u, index) => ({
+        id: Number(u.id),
+        username: u.name || u.username || u.email || `user-${index + 1}`,
+        role: (u.role || "USER").toLowerCase(),
+      }))
+        .filter((u) => Number.isFinite(u.id));
+
+      setUsers(normalizedUsers);
+    } catch (err) {
+      console.error("Error loading users:", err);
+      console.error("[AdminNotifications] Fetch users failed", {
+        status: err?.response?.status,
+        body: err?.response?.data,
+      });
+      setUsers([]);
+      const status = err?.response?.status;
+      const body = err?.response?.data;
+      const errorMessage =
+        body?.message ||
+        body?.error ||
+        err?.message ||
+        "Failed to load recipients from backend";
+
+      setUsersLoadError(`Recipients load failed (${status || "unknown"}): ${errorMessage}`);
+      setUsersLoadDebug({
+        endpoint: "/users or /admin/users",
+        status: status || "unknown",
+        body,
+      });
+      alert(err?.response?.data?.message || "Failed to load recipients from backend");
+    }
+  };
+
+  const userRecipients = useMemo(
+    () => users.filter((u) => (u.role || "").toLowerCase() !== "admin"),
+    [users]
+  );
 
   const loadNotifications = () => {
     const allNotifs = JSON.parse(
@@ -26,88 +110,91 @@ function AdminNotifications() {
     setNotifications(allNotifs);
   };
 
-  const toggleRecipient = (username) => {
-    const newRecipients = new Set(recipients);
-    if (newRecipients.has(username)) {
-      newRecipients.delete(username);
+  const toggleRecipient = (userId) => {
+    const normalizedUserId = Number(userId);
+    if (!Number.isFinite(normalizedUserId)) return;
+
+    if (selectedUsers.includes(normalizedUserId)) {
+      setSelectedUsers((prev) => prev.filter((id) => id !== normalizedUserId));
     } else {
-      newRecipients.add(username);
+      setSelectedUsers((prev) => [...prev, normalizedUserId]);
     }
-    setRecipients(newRecipients);
   };
 
-  const sendNotification = () => {
+  const handleSendNotification = async (mode = "in_app") => {
     if (!title.trim() || !message.trim()) {
       alert("Title and message are required");
       return;
     }
 
-    if (sendAllMode) {
-      setRecipients(new Set(users.map((u) => u.username)));
-    } else if (recipients.size === 0) {
+    const selectedUserIds = sendAllMode
+      ? userRecipients.map((u) => Number(u.id)).filter((id) => Number.isFinite(id))
+      : selectedUsers;
+
+    console.log("Selected Users:", selectedUserIds);
+
+    if (selectedUserIds.length === 0) {
       alert("Select at least one recipient");
       return;
     }
 
     const adminUsername = localStorage.getItem("username");
+    const recipientUsernames = userRecipients
+      .filter((u) => selectedUserIds.includes(Number(u.id)))
+      .map((u) => u.username);
+    const finalMessage = title.trim()
+      ? `${title.trim()}: ${message.trim()}`
+      : message.trim();
+
+    const sentAt = new Date().toISOString();
+    const sendingLabel = mode === "email" ? "email notification" : "notification";
+
+    try {
+      setSending(true);
+      for (const userId of selectedUserIds) {
+        const payload = {
+          userId: Number(userId),
+          message: finalMessage,
+          type: mode === "email" ? "EMAIL" : "IN_APP",
+        };
+        console.log("Sending payload:", payload);
+        await sendNotification(payload);
+      }
+    } catch (err) {
+      console.error("Error sending notification:", err);
+      alert(err.response?.data?.message || `Failed to send ${sendingLabel}`);
+      return;
+    } finally {
+      setSending(false);
+    }
 
     const notification = {
       id: Date.now(),
-      title,
-      message,
+      title: title.trim(),
+      message: message.trim(),
       sendBy: adminUsername,
-      recipients: Array.from(recipients),
-      sentAt: new Date().toISOString(),
-      read: {},
+      recipients: recipientUsernames,
+      sentAt,
+      source: "backend",
     };
 
-    // Store in adminNotifications for history
-    const allNotifs = JSON.parse(
-      localStorage.getItem("adminNotifications") || "[]"
-    );
+    const allNotifs = JSON.parse(localStorage.getItem("adminNotifications") || "[]");
     allNotifs.push(notification);
-    localStorage.setItem(
-      "adminNotifications",
-      JSON.stringify(allNotifs)
-    );
-
-    // Store in each user's notifications
-    users.forEach((u) => {
-      if (recipients.has(u.username)) {
-        const userNotifs = JSON.parse(
-          localStorage.getItem(
-            `notifications_${u.username}`
-          ) || "[]"
-        );
-        userNotifs.push({
-          id: notification.id,
-          type: "admin-message",
-          title: `📢 ${title}`,
-          message,
-          timestamp: notification.sentAt,
-          read: false,
-          sendBy: adminUsername,
-        });
-        localStorage.setItem(
-          `notifications_${u.username}`,
-          JSON.stringify(userNotifs)
-        );
-      }
-    });
+    localStorage.setItem("adminNotifications", JSON.stringify(allNotifs));
 
     logActivity(
       adminUsername,
-      "send_bulk_notification",
-      `Sent "${title}" to ${recipients.size} users`
+      mode === "email" ? "send_bulk_email_notification" : "send_bulk_notification",
+      `Sent ${sendingLabel} "${title.trim()}" to ${selectedUserIds.length} users`
     );
 
     alert(
-      `Notification sent to ${recipients.size} user${recipients.size !== 1 ? "s" : ""}!`
+      `${mode === "email" ? "Email notification" : "Notification"} sent to ${selectedUserIds.length} user${selectedUserIds.length !== 1 ? "s" : ""}!`
     );
 
     setTitle("");
     setMessage("");
-    setRecipients(new Set());
+    setSelectedUsers([]);
     setSendAllMode(false);
     loadNotifications();
   };
@@ -217,24 +304,40 @@ function AdminNotifications() {
 
               {!sendAllMode && (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {users.map((user) => (
+                  {usersLoadError && (
+                    <div className="p-3 mb-2 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-sm">
+                      <p className="font-semibold">Unable to load recipients</p>
+                      <p className="mt-1">{usersLoadError}</p>
+                      {usersLoadDebug && (
+                        <p className="mt-1 text-red-200/90">
+                          Endpoint: {usersLoadDebug.endpoint} | Status: {String(usersLoadDebug.status)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {!usersLoadError && userRecipients.length === 0 && (
+                    <div className="p-3 mb-2 rounded-lg border border-yellow-500/40 bg-yellow-500/10 text-yellow-200 text-sm">
+                      No recipients found. If users exist, click the refresh button and check token/session.
+                    </div>
+                  )}
+
+                  {userRecipients.map((user) => (
                     <label
-                      key={user.username}
+                      key={user.id}
                       className="flex items-center gap-3 p-3 bg-white/5 rounded-lg hover:bg-white/10 transition cursor-pointer"
                     >
                       <input
                         type="checkbox"
-                        checked={recipients.has(
-                          user.username
-                        )}
+                        checked={selectedUsers.includes(Number(user.id))}
                         onChange={() =>
-                          toggleRecipient(user.username)
+                          toggleRecipient(user.id)
                         }
                         className="w-4 h-4"
                       />
                       <span>{user.username}</span>
                       <span className="text-xs text-gray-500">
-                        {user.role.toUpperCase()}
+                        {String(user.role || "user").toUpperCase()}
                       </span>
                     </label>
                   ))}
@@ -243,19 +346,30 @@ function AdminNotifications() {
 
               <p className="text-sm text-gray-400 mt-4">
                 {sendAllMode
-                  ? `Will send to all ${users.length} users`
-                  : `${recipients.size} user${recipients.size !== 1 ? "s" : ""} selected`}
+                  ? `Will send to all ${userRecipients.length} users`
+                  : `${selectedUsers.length} user${selectedUsers.length !== 1 ? "s" : ""} selected`}
               </p>
             </div>
 
-            {/* Send Button */}
-            <button
-              onClick={sendNotification}
-              className="w-full px-6 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:scale-105 transition rounded-2xl font-bold text-lg flex items-center justify-center gap-2"
-            >
-              <Send size={24} />
-              Send Notification
-            </button>
+            {/* Send Buttons */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <button
+                onClick={() => handleSendNotification("in_app")}
+                disabled={sending}
+                className="w-full px-6 py-4 bg-gradient-to-r from-blue-500 to-indigo-600 hover:scale-105 transition rounded-2xl font-bold text-lg flex items-center justify-center gap-2 disabled:opacity-60 disabled:hover:scale-100"
+              >
+                <Send size={24} />
+                {sending ? "Sending..." : "Send In-App Notification"}
+              </button>
+              <button
+                onClick={() => handleSendNotification("email")}
+                disabled={sending}
+                className="w-full px-6 py-4 bg-gradient-to-r from-emerald-500 to-cyan-600 hover:scale-105 transition rounded-2xl font-bold text-lg flex items-center justify-center gap-2 disabled:opacity-60 disabled:hover:scale-100"
+              >
+                <Send size={24} />
+                {sending ? "Sending..." : "Send Email Notification"}
+              </button>
+            </div>
           </div>
         )}
 

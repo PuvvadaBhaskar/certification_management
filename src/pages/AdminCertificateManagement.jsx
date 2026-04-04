@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
 import { Search, Trash2, User, Download } from "lucide-react";
 import { generatePDF } from "../utils/pdfExport";
+import { getAllUsers } from "../api/user";
+import {
+  deleteCertification as deleteCertificationById,
+  getCertificationsByUser,
+} from "../api/certification";
 
 function AdminCertificateManagement() {
   const [allCerts, setAllCerts] = useState([]);
@@ -10,23 +15,53 @@ function AdminCertificateManagement() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [userFilter, setUserFilter] = useState("all");
   const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  const loadCertifications = () => {
-    const stored = JSON.parse(localStorage.getItem("users")) || [];
-    setUsers(stored);
+  const loadCertifications = async () => {
+    try {
+      setLoading(true);
+      const backendUsers = await getAllUsers();
+      const usersArray = Array.isArray(backendUsers) ? backendUsers : [];
 
-    const certs = [];
-    stored.forEach((user) => {
-      user.certifications?.forEach((cert) => {
-        certs.push({
-          ...cert,
-          username: user.username,
-          userRole: user.role,
-        });
-      });
-    });
+      const normalizedUsers = usersArray.map((u, index) => ({
+        id: u.id,
+        username: u.username || u.name || u.email || `user-${index + 1}`,
+        role: (u.role || "user").toLowerCase(),
+      }));
 
-    setAllCerts(certs);
+      setUsers(normalizedUsers);
+
+      const certCollections = await Promise.all(
+        normalizedUsers.map(async (user) => {
+          if (user.id === undefined || user.id === null) {
+            return [];
+          }
+
+          try {
+            const userCerts = await getCertificationsByUser(user.id);
+            const certsArray = Array.isArray(userCerts) ? userCerts : [];
+
+            return certsArray.map((cert) => ({
+              ...cert,
+              username: user.username,
+              userRole: user.role,
+              userId: user.id,
+            }));
+          } catch {
+            return [];
+          }
+        })
+      );
+
+      setAllCerts(certCollections.flat());
+    } catch (error) {
+      console.error("Failed to load certifications:", error);
+      alert(error?.response?.data?.message || "Failed to load certifications from backend");
+      setUsers([]);
+      setAllCerts([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const filterCertifications = () => {
@@ -67,7 +102,7 @@ function AdminCertificateManagement() {
     setFilteredCerts(filtered);
   };
 
-  const deleteCertificate = (username, certId) => {
+  const deleteCertificate = async (certId) => {
     if (
       !window.confirm(
         "Delete this certification? This action cannot be undone."
@@ -75,20 +110,13 @@ function AdminCertificateManagement() {
     )
       return;
 
-    const updated = users.map((u) => {
-      if (u.username === username) {
-        return {
-          ...u,
-          certifications: u.certifications.filter(
-            (c) => c.id !== certId
-          ),
-        };
-      }
-      return u;
-    });
-
-    localStorage.setItem("users", JSON.stringify(updated));
-    loadCertifications();
+    try {
+      await deleteCertificationById(certId);
+      setAllCerts((prev) => prev.filter((c) => c.id !== certId));
+    } catch (error) {
+      console.error("Failed to delete certification:", error);
+      alert(error?.response?.data?.message || "Failed to delete certification in backend");
+    }
   };
 
   useEffect(() => {
@@ -164,7 +192,11 @@ function AdminCertificateManagement() {
         </div>
 
         {/* Certifications Table */}
-        {filteredCerts.length > 0 ? (
+        {loading ? (
+          <div className="bg-white/10 p-8 rounded-2xl text-center text-gray-400">
+            Loading certifications from backend...
+          </div>
+        ) : filteredCerts.length > 0 ? (
           <div className="space-y-3">
             {filteredCerts.map((cert) => {
               const isExpired =
@@ -219,12 +251,7 @@ function AdminCertificateManagement() {
                     </div>
 
                     <button
-                      onClick={() =>
-                        deleteCertificate(
-                          cert.username,
-                          cert.id
-                        )
-                      }
+                      onClick={() => deleteCertificate(cert.id)}
                       className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition flex items-center gap-2"
                     >
                       <Trash2 size={18} />

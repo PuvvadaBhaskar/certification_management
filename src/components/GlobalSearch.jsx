@@ -1,25 +1,63 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Search, X } from "lucide-react";
+import { getCertifications } from "../apis/certificationService";
 
 export const GlobalSearch = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
+  const [certifications, setCertifications] = useState([]);
+
+  useEffect(() => {
+    const loadCertifications = async () => {
+      let userId = null;
+
+      try {
+        const user = JSON.parse(localStorage.getItem("user") || "null");
+        if (user?.id !== undefined && user?.id !== null) {
+          userId = String(user.id);
+        }
+      } catch {
+        // Ignore malformed user JSON.
+      }
+
+      if (!userId) {
+        const fallbackId = localStorage.getItem("userId");
+        if (fallbackId && fallbackId !== "null" && fallbackId !== "undefined") {
+          userId = fallbackId;
+        }
+      }
+
+      if (!userId) {
+        setCertifications([]);
+        return;
+      }
+
+      try {
+        const response = await getCertifications({ userId });
+        const certs = Array.isArray(response?.data) ? response.data : [];
+        setCertifications(certs);
+      } catch {
+        setCertifications([]);
+      }
+    };
+
+    if (isOpen) {
+      loadCertifications();
+    }
+  }, [isOpen]);
 
   const handleSearch = (e) => {
     const value = e.target.value;
     setQuery(value);
 
     if (value.trim()) {
-      const username = localStorage.getItem("username");
-      const users = JSON.parse(localStorage.getItem("users")) || [];
-      const currentUser = users.find((u) => u.username === username);
-
-      const certs = currentUser?.certifications || [];
-      const matchedCerts = certs.filter(
+      const matchedCerts = certifications.filter(
         (c) =>
-          c.name.toLowerCase().includes(value.toLowerCase()) ||
-          c.organization
+          String(c.name || "")
+            .toLowerCase()
+            .includes(value.toLowerCase()) ||
+          String(c.organization || "")
             .toLowerCase()
             .includes(value.toLowerCase())
       );

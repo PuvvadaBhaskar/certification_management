@@ -29,6 +29,7 @@ function DashboardLayout({ children }) {
   const logout = () => {
     localStorage.removeItem("username");
     localStorage.removeItem("role");
+    localStorage.removeItem("userId");
     navigate("/");
   };
 
@@ -60,7 +61,7 @@ function DashboardLayout({ children }) {
             {appConfig.appName} {appConfig.appEmoji}
           </h1>
 
-          {role === "admin" ? (
+          {role === "ADMIN" ? (
             <>
               {navItem("/admin/dashboard", "Dashboard", "📊")}
               {navItem("/admin/users", "User Management", "👥")}
