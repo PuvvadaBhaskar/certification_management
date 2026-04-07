@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
 import { Lock, Eye, EyeOff, History } from "lucide-react";
 import { getUserActivities, logActivity } from "../utils/auditLog";
-import { getUserById } from "../apis/userService";
-import { getCertifications } from "../apis/certificationService";
+import { getUserById } from "../api/user";
+import { getCertifications } from "../api/certification";
 
 function Profile() {
   const [user, setUser] = useState({});
@@ -26,8 +26,7 @@ function Profile() {
       }
 
       try {
-        const response = await getUserById(userId);
-        const backendUser = response?.data || {};
+        const backendUser = (await getUserById(userId)) || {};
         const normalizedUsername =
           backendUser.username || backendUser.name || backendUser.email || username || "User";
 
@@ -47,8 +46,8 @@ function Profile() {
         }
 
         try {
-          const certRes = await getCertifications({ userId });
-          const certs = Array.isArray(certRes?.data) ? certRes.data : [];
+          const certsData = await getCertifications({ userId });
+          const certs = Array.isArray(certsData) ? certsData : [];
           setCertificationCount(certs.length);
         } catch {
           setCertificationCount(0);

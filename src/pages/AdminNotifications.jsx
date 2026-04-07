@@ -2,8 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
 import { Send, Users, MessageSquare, History, X } from "lucide-react";
 import { logActivity } from "../utils/auditLog";
-import api from "../api/axios";
-import { sendNotification } from "../api/notification";
+import { getAllUsers } from "../api/user";
+import {
+  createBulkNotification,
+  deleteNotification,
+  getNotificationHistory,
+} from "../apis/notificationService";
 
 function AdminNotifications() {
   const [users, setUsers] = useState([]);
@@ -25,46 +29,17 @@ function AdminNotifications() {
   const loadUsers = async () => {
     try {
       setUsersLoadError("");
-      const hasToken = Boolean(
-        localStorage.getItem("token") || localStorage.getItem("accessToken")
-      );
-      console.log("[AdminNotifications] Fetch users start", {
-        endpoint: "/users",
-        hasBearerToken: hasToken,
-      });
-
-      let response;
-      let endpointUsed = "/users";
-
-      try {
-        response = await api.get("/users");
-      } catch (firstError) {
-        const firstStatus = firstError?.response?.status;
-        console.log("[AdminNotifications] /users failed, trying /admin/users", {
-          status: firstStatus,
-          body: firstError?.response?.data,
-        });
-        endpointUsed = "/admin/users";
-        response = await api.get("/admin/users");
-      }
-
-      const backendUsers = Array.isArray(response?.data) ? response.data : [];
+      const backendUsers = await getAllUsers();
+      const safeUsers = Array.isArray(backendUsers) ? backendUsers : [];
 
       setUsersLoadDebug({
-        endpoint: endpointUsed,
-        status: response?.status,
-        bodyType: Array.isArray(response?.data) ? "array" : typeof response?.data,
-        count: backendUsers.length,
+        endpoint: "/users",
+        status: "ok",
+        bodyType: "array",
+        count: safeUsers.length,
       });
 
-      console.log("[AdminNotifications] Fetch users success", {
-        endpoint: endpointUsed,
-        status: response?.status,
-        count: backendUsers.length,
-        sample: backendUsers[0],
-      });
-
-      const normalizedUsers = backendUsers
+      const normalizedUsers = safeUsers
         .map((u, index) => ({
         id: Number(u.id),
         username: u.name || u.username || u.email || `user-${index + 1}`,
@@ -75,10 +50,6 @@ function AdminNotifications() {
       setUsers(normalizedUsers);
     } catch (err) {
       console.error("Error loading users:", err);
-      console.error("[AdminNotifications] Fetch users failed", {
-        status: err?.response?.status,
-        body: err?.response?.data,
-      });
       setUsers([]);
       const status = err?.response?.status;
       const body = err?.response?.data;
@@ -90,7 +61,7 @@ function AdminNotifications() {
 
       setUsersLoadError(`Recipients load failed (${status || "unknown"}): ${errorMessage}`);
       setUsersLoadDebug({
-        endpoint: "/users or /admin/users",
+        endpoint: "/users",
         status: status || "unknown",
         body,
       });
@@ -103,11 +74,13 @@ function AdminNotifications() {
     [users]
   );
 
-  const loadNotifications = () => {
-    const allNotifs = JSON.parse(
-      localStorage.getItem("adminNotifications") || "[]"
-    );
-    setNotifications(allNotifs);
+  const loadNotifications = async () => {
+    try {
+      const history = await getNotificationHistory();
+      setNotifications(Array.isArray(history) ? history : []);
+    } catch {
+      setNotifications([]);
+    }
   };
 
   const toggleRecipient = (userId) => {
@@ -131,35 +104,27 @@ function AdminNotifications() {
       ? userRecipients.map((u) => Number(u.id)).filter((id) => Number.isFinite(id))
       : selectedUsers;
 
-    console.log("Selected Users:", selectedUserIds);
+    const userIds = [...new Set(selectedUserIds.map((id) => Number(id)).filter((id) => Number.isFinite(id)))];
 
-    if (selectedUserIds.length === 0) {
+    console.log("Selected Users:", userIds);
+
+    if (userIds.length === 0) {
       alert("Select at least one recipient");
       return;
     }
 
-    const adminUsername = localStorage.getItem("username");
-    const recipientUsernames = userRecipients
-      .filter((u) => selectedUserIds.includes(Number(u.id)))
-      .map((u) => u.username);
-    const finalMessage = title.trim()
-      ? `${title.trim()}: ${message.trim()}`
-      : message.trim();
-
-    const sentAt = new Date().toISOString();
     const sendingLabel = mode === "email" ? "email notification" : "notification";
+    const senderId = Number(localStorage.getItem("userId"));
 
     try {
       setSending(true);
-      for (const userId of selectedUserIds) {
-        const payload = {
-          userId: Number(userId),
-          message: finalMessage,
-          type: mode === "email" ? "EMAIL" : "IN_APP",
-        };
-        console.log("Sending payload:", payload);
-        await sendNotification(payload);
-      }
+      await createBulkNotification({
+        title: title.trim(),
+        message: message.trim(),
+        userIds,
+        channel: mode === "email" ? "email" : "in_app",
+        senderId: Number.isFinite(senderId) ? senderId : null,
+      });
     } catch (err) {
       console.error("Error sending notification:", err);
       alert(err.response?.data?.message || `Failed to send ${sendingLabel}`);
@@ -168,49 +133,35 @@ function AdminNotifications() {
       setSending(false);
     }
 
-    const notification = {
-      id: Date.now(),
-      title: title.trim(),
-      message: message.trim(),
-      sendBy: adminUsername,
-      recipients: recipientUsernames,
-      sentAt,
-      source: "backend",
-    };
-
-    const allNotifs = JSON.parse(localStorage.getItem("adminNotifications") || "[]");
-    allNotifs.push(notification);
-    localStorage.setItem("adminNotifications", JSON.stringify(allNotifs));
+    const adminUsername = localStorage.getItem("username");
 
     logActivity(
       adminUsername,
       mode === "email" ? "send_bulk_email_notification" : "send_bulk_notification",
-      `Sent ${sendingLabel} "${title.trim()}" to ${selectedUserIds.length} users`
+      `Sent ${sendingLabel} "${title.trim()}" to ${userIds.length} users`
     );
 
     alert(
-      `${mode === "email" ? "Email notification" : "Notification"} sent to ${selectedUserIds.length} user${selectedUserIds.length !== 1 ? "s" : ""}!`
+      `${mode === "email" ? "Email notification" : "Notification"} sent to ${userIds.length} user${userIds.length !== 1 ? "s" : ""}!`
     );
 
     setTitle("");
     setMessage("");
     setSelectedUsers([]);
     setSendAllMode(false);
-    loadNotifications();
+    await loadNotifications();
   };
 
-  const deleteNotificationRecord = (notifId) => {
+  const deleteNotificationRecord = async (notifId) => {
     if (!window.confirm("Delete this notification?"))
       return;
 
-    const updated = notifications.filter(
-      (n) => n.id !== notifId
-    );
-    localStorage.setItem(
-      "adminNotifications",
-      JSON.stringify(updated)
-    );
-    loadNotifications();
+    try {
+      await deleteNotification(notifId);
+      await loadNotifications();
+    } catch (err) {
+      alert(err?.response?.data?.message || "Failed to delete notification");
+    }
   };
 
   return (

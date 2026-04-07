@@ -45,8 +45,8 @@ function Notifications() {
 
       setLoading(true);
       setError(null);
-      const response = await getNotifications(userId);
-      setNotifications(response.data || []);
+      const data = await getNotifications(userId);
+      setNotifications(Array.isArray(data) ? data : []);
     } catch (err) {
       setError(
         err.response?.data?.message || "Failed to fetch notifications"

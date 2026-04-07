@@ -4,7 +4,7 @@ import DashboardLayout from "../layouts/DashboardLayout";
 import {
   getCertificationById,
   updateCertification,
-} from "../apis/certificationService";
+} from "../api/certification";
 
 function RenewCertification() {
   const { id } = useParams();
@@ -45,8 +45,7 @@ function RenewCertification() {
         }
 
         setLoading(true);
-        const response = await getCertificationById(id, userId);
-        const payload = response?.data;
+        const payload = await getCertificationById(id);
 
         if (Array.isArray(payload)) {
           const matched = payload.find((c) => String(c.id) === String(id));

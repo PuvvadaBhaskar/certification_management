@@ -1,11 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import DashboardLayout from "../layouts/DashboardLayout";
 import { Edit, Trash2, RotateCw, Loader, AlertCircle } from "lucide-react";
-import { getCertifications, deleteCertification } from "../apis/certificationService";
+import {
+  getCertificationsByUser,
+  deleteCertification,
+} from "../api/certification";
 
 function MyCertifications() {
-  const [certifications, setCertifications] = useState([]);
+  const [certificates, setCertificates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -14,6 +17,7 @@ function MyCertifications() {
   const [totalPages, setTotalPages] = useState(1);
   const [deleting, setDeleting] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const itemsPerPage = 5;
   const getUserId = () => {
@@ -35,13 +39,14 @@ function MyCertifications() {
   };
 
   const userId = getUserId();
+  console.log("[MyCertifications] resolved userId:", userId);
 
   const fetchCertifications = useCallback(async () => {
     try {
       if (!userId) {
         navigate("/");
         setError("Session expired. Please log in again.");
-        setCertifications([]);
+        setCertificates([]);
         setTotalPages(1);
         return;
       }
@@ -49,39 +54,39 @@ function MyCertifications() {
       setLoading(true);
       setError(null);
 
-      const params = {
-        userId,
-        page: currentPage - 1,
-        size: itemsPerPage,
-        search: searchTerm || undefined,
-        status: statusFilter !== "all" ? statusFilter : undefined,
-      };
+      const responseData = await getCertificationsByUser(userId);
+      const allCertificates = Array.isArray(responseData)
+        ? responseData
+        : Array.isArray(responseData?.content)
+          ? responseData.content
+          : [];
 
-      // Remove undefined values
-      Object.keys(params).forEach(
-        (key) => params[key] === undefined && delete params[key]
-      );
+      const filtered = allCertificates.filter((cert) => {
+        const matchesSearch =
+          !searchTerm ||
+          cert?.title?.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesStatus =
+          statusFilter === "all" ||
+          (cert?.status || "").toUpperCase() === statusFilter.toUpperCase();
+        return matchesSearch && matchesStatus;
+      });
 
-      const response = await getCertifications(params);
-      const payload = response?.data ?? [];
-      const content = Array.isArray(payload)
-        ? payload
-        : Array.isArray(payload.content)
-          ? payload.content
-          : Array.isArray(payload.items)
-            ? payload.items
-            : [];
+      const start = (currentPage - 1) * itemsPerPage;
+      const end = start + itemsPerPage;
+      const data = filtered.slice(start, end);
 
-      const pages =
-        Number(payload.totalPages ?? payload.page?.totalPages ?? 1) || 1;
-
-      setCertifications(content);
-      setTotalPages(Math.max(1, pages));
+      setCertificates(data);
+      setTotalPages(Math.max(1, Math.ceil(filtered.length / itemsPerPage)));
     } catch (err) {
-      setError(
-        err.response?.data?.message || "Failed to fetch certifications"
-      );
       console.error("Error fetching certifications:", err);
+      const backendMessage =
+        err?.response?.data?.message || err?.response?.data?.error;
+      setError(
+        backendMessage ||
+          "Failed to fetch certifications. Please check login/session and try again."
+      );
+      setCertificates([]);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }
@@ -89,7 +94,7 @@ function MyCertifications() {
 
   useEffect(() => {
     fetchCertifications();
-  }, [fetchCertifications]);
+  }, [fetchCertifications, location.key, location.state?.refreshAt]);
 
   const handleDelete = async (id) => {
     if (!window.confirm("Are you sure you want to delete this certification?")) {
@@ -143,7 +148,7 @@ function MyCertifications() {
     });
   };
 
-  if (loading && certifications.length === 0) {
+  if (loading && certificates.length === 0) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-screen">
@@ -222,7 +227,7 @@ function MyCertifications() {
 
         {/* Certifications Table */}
         <div className="bg-white/5 backdrop-blur-lg rounded-xl overflow-hidden border border-white/10">
-          {certifications.length === 0 ? (
+          {certificates.length === 0 ? (
             <div className="p-8 text-center">
               <p className="text-gray-400 text-lg">No certifications found</p>
             </div>
@@ -242,7 +247,7 @@ function MyCertifications() {
                         Status
                       </th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">
-                        Expiry Date
+                        Dates
                       </th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">
                         Actions
@@ -250,7 +255,7 @@ function MyCertifications() {
                     </tr>
                   </thead>
                   <tbody>
-                    {certifications.map((cert) => (
+                    {certificates.map((cert) => (
                       <tr
                         key={cert.id}
                         className="border-b border-white/10 hover:bg-white/5 transition"
@@ -269,7 +274,7 @@ function MyCertifications() {
                           </span>
                         </td>
                         <td className="px-6 py-4 text-gray-300">
-                          {formatDate(cert.expiryDate)}
+                          {formatDate(cert.issueDate)} - {formatDate(cert.expiryDate)}
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex gap-3">

@@ -118,7 +118,9 @@ function AddCertification() {
       setCertificateFile(null);
 
       setTimeout(() => {
-        navigate("/user/certifications");
+        navigate("/user/certifications", {
+          state: { refreshAt: Date.now() },
+        });
       }, 2000);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to add certification");

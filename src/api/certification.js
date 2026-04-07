@@ -1,5 +1,42 @@
 import api from "./axios";
 
+const normalizeCertCollection = (payload) => {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (Array.isArray(payload?.content)) {
+    return payload.content;
+  }
+
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+
+  if (Array.isArray(payload?.data?.content)) {
+    return payload.data.content;
+  }
+
+  return [];
+};
+
+const normalizeCertEntity = (payload) => {
+  if (Array.isArray(payload)) {
+    return payload[0] || null;
+  }
+
+  if (payload?.data && !Array.isArray(payload.data)) {
+    return payload.data;
+  }
+
+  return payload || null;
+};
+
+export const getCertifications = async (params = {}) => {
+  const response = await api.get("/certifications", { params });
+  return normalizeCertCollection(response.data);
+};
+
 export const addCertification = async (formData) => {
   const accessToken = localStorage.getItem("accessToken");
 
@@ -14,7 +51,12 @@ export const addCertification = async (formData) => {
 
 export const getCertificationsByUser = async (userId) => {
   const response = await api.get(`/certifications/user/${userId}`);
-  return response.data;
+  return normalizeCertCollection(response.data);
+};
+
+export const getCertificationById = async (id) => {
+  const response = await api.get(`/certifications/${id}`);
+  return normalizeCertEntity(response.data);
 };
 
 export const updateCertification = async (id, data) => {
@@ -52,5 +94,5 @@ export const getAllCertifications = async (
       status,
     },
   });
-  return response.data;
+  return normalizeCertCollection(response.data);
 };

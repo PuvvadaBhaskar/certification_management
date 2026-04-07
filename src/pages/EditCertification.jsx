@@ -5,7 +5,7 @@ import { Loader, AlertCircle, CheckCircle, ArrowLeft } from "lucide-react";
 import {
   getCertificationById,
   updateCertification,
-} from "../apis/certificationService";
+} from "../api/certification";
 
 function EditCertification() {
   const { id } = useParams();
@@ -51,9 +51,7 @@ function EditCertification() {
       }
 
       setLoading(true);
-      const response = await getCertificationById(id, userId);
-
-      const payload = response?.data ?? [];
+      const payload = await getCertificationById(id);
       const certifications = Array.isArray(payload)
         ? payload
         : Array.isArray(payload.content)

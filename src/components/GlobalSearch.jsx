@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Search, X } from "lucide-react";
-import { getCertifications } from "../apis/certificationService";
+import { getCertifications } from "../api/certification";
 
 export const GlobalSearch = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -34,8 +34,8 @@ export const GlobalSearch = () => {
       }
 
       try {
-        const response = await getCertifications({ userId });
-        const certs = Array.isArray(response?.data) ? response.data : [];
+        const data = await getCertifications({ userId });
+        const certs = Array.isArray(data) ? data : [];
         setCertifications(certs);
       } catch {
         setCertifications([]);

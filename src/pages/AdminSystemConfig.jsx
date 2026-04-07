@@ -156,8 +156,7 @@ function AdminSystemConfig() {
 
   const collectAllCertifications = async () => {
     try {
-      const usersResponse = await getUsers();
-      const users = Array.isArray(usersResponse?.data) ? usersResponse.data : [];
+      const users = await getAllUsers();
 
       const allCerts = await Promise.all(
         users.map(async (user, index) => {
@@ -168,8 +167,7 @@ function AdminSystemConfig() {
           }
 
           try {
-            const certResponse = await getCertifications({ userId: user.id });
-            const certs = Array.isArray(certResponse?.data) ? certResponse.data : [];
+            const certs = await getCertificationsByUser(user.id);
             return { username, certs };
           } catch {
             return { username, certs: [] };
