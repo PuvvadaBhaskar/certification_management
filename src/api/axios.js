@@ -1,8 +1,37 @@
 import axios from "axios";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:2212/api";
+/**
+ * API Base URL Configuration
+ * - Reads from VITE_API_BASE_URL environment variable
+ * - Fallback is production Railway URL (HTTPS only)
+ * - Always ensures HTTPS protocol in production
+ */
+const getAPIBaseURL = () => {
+  const envURL = import.meta.env.VITE_API_BASE_URL;
+  
+  if (envURL) {
+    // Ensure HTTPS protocol
+    if (!envURL.startsWith("https://")) {
+      console.warn(
+        "⚠️  API URL should use HTTPS. Converting to HTTPS:",
+        envURL
+      );
+      return envURL.replace("http://", "https://");
+    }
+    return envURL;
+  }
 
+  // Production fallback - Railway HTTPS URL
+  const fallbackURL =
+    "https://certificationmanagement-backend-production.up.railway.app/api";
+  console.warn(
+    "⚠️  VITE_API_BASE_URL not set. Using fallback:",
+    fallbackURL
+  );
+  return fallbackURL;
+};
+
+const API_BASE_URL = getAPIBaseURL();
 console.log("🌐 API Base URL configured:", API_BASE_URL);
 
 const api = axios.create({
@@ -78,22 +107,24 @@ api.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const refreshResponse = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-        refreshToken: currentRefreshToken,
-      });
+      // Send refreshToken as query parameter (not in request body)
+      const refreshResponse = await axios.get(
+        `${API_BASE_URL}/auth/refresh?refreshToken=${encodeURIComponent(
+          currentRefreshToken
+        )}`
+      );
 
-      const newAccessToken = refreshResponse?.data?.accessToken;
-      const rotatedRefreshToken = refreshResponse?.data?.refreshToken;
+      // Backend returns access token as plain string (not JSON object)
+      const newAccessToken = refreshResponse?.data;
 
-      if (!newAccessToken) {
-        throw new Error("Refresh token API did not return accessToken");
+      if (!newAccessToken || typeof newAccessToken !== "string") {
+        throw new Error(
+          "Refresh token API did not return valid access token"
+        );
       }
 
       localStorage.setItem("accessToken", newAccessToken);
       localStorage.setItem("token", newAccessToken);
-      if (rotatedRefreshToken) {
-        localStorage.setItem("refreshToken", rotatedRefreshToken);
-      }
 
       api.defaults.headers.common.Authorization = `Bearer ${newAccessToken}`;
       originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
